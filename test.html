@@ -257,7 +257,9 @@
         cart.forEach(item => {
             const li = document.createElement("li");
             li.className = "item-row";
-            li.innerHTML = `<span>${item.name}</span> <span class="price">₱${item.price.toFixed(2)}</span>`;
+            const qty = item.quantity || 1;
+            const itemTotal = item.price * qty;
+            li.innerHTML = `<span>${item.name} (x${qty})</span> <span class="price">₱${itemTotal.toFixed(2)}</span>`;
             itemList.appendChild(li);
         });
         itemList.scrollTop = itemList.scrollHeight;

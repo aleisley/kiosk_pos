@@ -142,7 +142,17 @@ async def websocket_endpoint(websocket: WebSocket):
                             item = ITEM_DB[cls_id]
                             scan_time = time.time()
                             if scan_time - state.last_scan_time > state.cooldown:
-                                state.cart.append(item)
+                                # Check if item already in cart
+                                found = False
+                                for cart_item in state.cart:
+                                    if cart_item["name"] == item["name"]:
+                                        cart_item["quantity"] += 1
+                                        found = True
+                                        break
+                                
+                                if not found:
+                                    state.cart.append({**item, "quantity": 1})
+                                
                                 state.total += item["price"]
                                 state.last_scan_time = scan_time
                                 response["feedback"] = f"Added {item['name']}!"
@@ -188,8 +198,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     print("Transition: IDLE -> SCANNING")
 
             elif state.mode == "SCANNING":
-                if not product_detected:
-                     if response["feedback"] == "": response["feedback"] = "Scanning... Clench to Pay ✊"
+                # if not product_detected:
+                #      if response["feedback"] == "": response["feedback"] = "Scanning... Clench to Pay ✊"
                 
                 if trigger_action:
                     state.mode = "PAID"
@@ -199,7 +209,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             elif state.mode == "PAID":
                 response["feedback"] = "Paid! Resetting..."
-                if time.time() - state.gesture_debounce > 4.0:
+                if time.time() - state.gesture_debounce > 2.0:
                      state.mode = "IDLE"
 
             # G. Send JSON
