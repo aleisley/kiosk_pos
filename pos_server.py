@@ -14,7 +14,7 @@ print("Loading Grocery POS Models...")
 
 # Load Object Detection (Using .pt format for now)
 try:
-    model = YOLO('best_v12.pt')
+    model = YOLO('best_v13.pt')
     print("✅ Custom Torch Model Loaded (best.pt)")
 except Exception as e:
     print(f"⚠️ Custom model not found ({e}). Using Standard YOLO.")
@@ -154,7 +154,7 @@ async def websocket_endpoint(websocket: WebSocket):
                          face_boxes.append([x1, y1, x2, y2])
                  
                  # Speed optimizations: GPU acceleration, lower confidence, IOU filtering
-                 results = model(frame, conf=0.6, iou=0.5, verbose=False, imgsz=640)
+                 results = model(frame, conf=0.55, iou=0.45, verbose=False, imgsz=640)
                  for r in results:
                     for box in r.boxes:
                         x1, y1, x2, y2 = box.xyxy[0].tolist()
