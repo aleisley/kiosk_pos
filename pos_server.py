@@ -88,7 +88,7 @@ class KioskState:
         self.cart = []            
         self.total = 0.0
         self.last_scan_time = 0
-        self.cooldown = 2.5
+        self.cooldown = 1.5
         self.last_gesture = "UNKNOWN"
         self.gesture_debounce = 0
         self.gesture_timeout = 3.0  # Seconds to complete OPEN->CLOSED sequence
@@ -123,9 +123,10 @@ async def websocket_endpoint(websocket: WebSocket):
             # --- C. OBJECT DETECTION (Run First!) ---
             product_detected = False
             
-            # Check for items in SCANNING mode (Safety Lock)
+            # Check for items in SCANNING mode (SCANNING Lock)
             if state.mode == "SCANNING":
-                 results = model(frame, conf=0.6, verbose=False)
+                 # Speed optimizations: GPU acceleration, lower confidence, IOU filtering
+                 results = model(frame, conf=0.5, iou=0.45, verbose=False, imgsz=640)
                  for r in results:
                     if len(r.boxes) > 0:
                         product_detected = True
