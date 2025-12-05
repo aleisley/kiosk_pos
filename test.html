@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Jetson Grocery POS</title>
+    <style>
+        body { margin: 0; background: linear-gradient(135deg, #c2185b 0%, #d81b60 100%); font-family: 'Segoe UI', sans-serif; color: white; display: flex; height: 100vh; overflow: hidden; }
+        
+        /* LAYOUT */
+        #main-view { 
+            flex: 1; 
+            position: relative; 
+            background: #000; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+        }
+
+        #sidebar { 
+            width: 400px; 
+            min-width: 350px;
+            background: linear-gradient(180deg, #c2185b 0%, #ad1457 100%); 
+            padding: 0;
+            display: flex; 
+            flex-direction: column; 
+            box-shadow: -5px 0 15px rgba(0,0,0,0.5); 
+            z-index: 2;
+        }
+
+        /* LOGO HEADER */
+        #logo-header {
+            background: #c2185b;
+            padding: 30px 20px;
+            text-align: center;
+            border-bottom: 3px solid #fff;
+        }
+
+        #logo {
+            width: 200px;
+            height: auto;
+            margin-bottom: 10px;
+        }
+
+        .tagline {
+            font-size: 1.3rem;
+            font-weight: 300;
+            letter-spacing: 2px;
+            margin: 0;
+            color: #fff;
+        }
+
+        /* CART SECTION */
+        #cart-section {
+            padding: 20px;
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* VIDEO CONTAINER */
+        #container { position: relative; width: 100%; height: 100%; }
+        video { width: 100%; height: 100%; object-fit: contain; }
+        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+
+        /* UI ELEMENTS */
+        h1 { margin: 0 0 20px 0; color: #fff; border-bottom: 2px solid rgba(255,255,255,0.3); padding-bottom: 10px; font-size: 1.8rem; }
+        
+        #item-list { flex-grow: 1; overflow-y: auto; list-style: none; padding: 0; margin: 0; }
+        .item-row { display: flex; justify-content: space-between; padding: 12px 5px; border-bottom: 1px solid rgba(255,255,255,0.2); font-size: 1.2rem; }
+        .price { font-weight: bold; color: #fff; }
+        
+        #total-box { font-size: 2.5rem; font-weight: bold; text-align: right; margin-top: auto; padding-top: 20px; border-top: 3px solid #fff; color: #fff; }
+
+        #msg-box { 
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+            background: rgba(194, 24, 91, 0.95); padding: 15px 40px; border-radius: 50px; 
+            font-size: 1.5rem; text-align: center; white-space: nowrap; transition: all 0.3s;
+            z-index: 10;
+            border: 2px solid #fff;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.5);
+        }
+
+        /* Hidden Canvas for capture */
+        #capture { display: none; }
+    </style>
+</head>
+<body>
+
+<div id="main-view">
+    <div id="container">
+        <video id="cam" autoplay playsinline muted></video>
+        <canvas id="overlay"></canvas>
+    </div>
+    <div id="msg-box">Connecting...</div>
+</div>
+
+<div id="sidebar">
+    <div id="logo-header">
+        <svg id="logo" viewBox="0 0 768 1126" xmlns="http://www.w3.org/2000/svg">
+            <rect width="768" height="1126" fill="#c2185b"/>
+            <path d="M138 104 L301 104 L301 452 L138 519 Z" fill="#fff"/>
+            <path d="M138 519 L247 519 L247 620 L138 620 Z" fill="#fff"/>
+            <path d="M301 104 Q634 104 634 437 Q634 770 301 770 L301 620 Q467 620 467 362 Q467 104 301 104 Z" fill="#fff"/>
+            <text x="90" y="920" font-family="Arial, sans-serif" font-size="120" font-weight="bold" fill="#fff">naDALI</text>
+            <text x="90" y="1010" font-family="Arial, sans-serif" font-size="50" font-weight="300" fill="#fff" letter-spacing="5">Imaginary Grocery</text>
+        </svg>
+        <p class="tagline">Smart Shopping</p>
+    </div>
+    <div id="cart-section">
+        <h1>🛒 My Cart</h1>
+        <ul id="item-list"></ul>
+        <div id="total-box">Total: ₱0.00</div>
+    </div>
+</div>
+
+<canvas id="capture"></canvas>
+
+<script>
+    const video = document.getElementById('cam');
+    const overlay = document.getElementById('overlay');
+    const capture = document.getElementById('capture');
+    const msgBox = document.getElementById('msg-box');
+    const itemList = document.getElementById('item-list');
+    const totalBox = document.getElementById('total-box');
+    
+    const ctxOverlay = overlay.getContext('2d');
+    const ctxCapture = capture.getContext('2d');
+    
+    let socket = null;
+    let isProcessing = false;
+    let resetTimer = null;
+    
+    // Internal resolution for AI (Faster transmission)
+    const AI_WIDTH = 640;
+    const AI_HEIGHT = 480;
+
+    // 1. Start Camera
+    async function start() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false 
+            });
+            video.srcObject = stream;
+            video.onloadedmetadata = () => {
+                video.play();
+                capture.width = AI_WIDTH;
+                capture.height = AI_HEIGHT;
+                resizeOverlay();
+                window.addEventListener('resize', resizeOverlay);
+                connect();
+            };
+        } catch(e) {
+            msgBox.innerText = "Camera Error";
+            msgBox.style.color = "red";
+        }
+    }
+
+    function resizeOverlay() {
+        overlay.width = video.clientWidth;
+        overlay.height = video.clientHeight;
+    }
+
+    // 2. Connect
+    function connect() {
+        socket = new WebSocket("ws://127.0.0.1:8080/ws");
+
+        socket.onopen = () => {
+            msgBox.innerText = "Connected!";
+            requestAnimationFrame(sendFrame);
+        };
+
+        socket.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            
+            // A. Update Status Text
+            msgBox.innerText = data.feedback || data.mode;
+            if (data.mode === "SCANNING") {
+                msgBox.style.background = "rgba(194, 24, 91, 0.95)";
+                msgBox.style.color = "#fff";
+            }
+            else if (data.mode === "PAID") {
+                msgBox.style.background = "rgba(0, 230, 118, 0.95)";
+                msgBox.style.color = "#fff";
+            }
+            else {
+                msgBox.style.background = "rgba(194, 24, 91, 0.95)";
+                msgBox.style.color = "#fff";
+            }
+
+            // B. Draw Overlays
+            ctxOverlay.clearRect(0, 0, overlay.width, overlay.height);
+            drawOverlays(data);
+
+            // C. Update Receipt
+            updateReceipt(data.cart, data.total);
+
+            // D. Handle PAID Reset Logic
+            if (data.mode === "PAID" && !resetTimer) {
+                resetTimer = setTimeout(() => { resetTimer = null; }, 4000);
+            }
+
+            isProcessing = false;
+            requestAnimationFrame(sendFrame);
+        };
+        
+        socket.onclose = () => setTimeout(connect, 3000);
+    }
+
+    function sendFrame() {
+        if (!socket || socket.readyState !== WebSocket.OPEN || isProcessing) return;
+        isProcessing = true;
+        ctxCapture.drawImage(video, 0, 0, AI_WIDTH, AI_HEIGHT);
+        capture.toBlob(blob => socket.send(blob), 'image/jpeg', 0.5);
+    }
+
+    function drawOverlays(data) {
+        const scaleX = overlay.width / AI_WIDTH;
+        const scaleY = overlay.height / AI_HEIGHT;
+
+        // 1. Hands
+        if (data.hand_coords && data.hand_coords.length > 0) {
+            ctxOverlay.fillStyle = data.gesture === "OPEN" ? "#0f0" : "red";
+            data.hand_coords.forEach(pt => {
+                ctxOverlay.beginPath();
+                ctxOverlay.arc(pt[0] * overlay.width, pt[1] * overlay.height, 5, 0, 2*Math.PI);
+                ctxOverlay.fill();
+            });
+        }
+
+        // 2. Boxes
+        ctxOverlay.lineWidth = 3;
+        ctxOverlay.font = "bold 18px Arial";
+        
+        data.boxes.forEach(box => {
+            const [rawX1, rawY1, rawX2, rawY2] = box.coords;
+            
+            const x1 = rawX1 * scaleX;
+            const y1 = rawY1 * scaleY;
+            const x2 = rawX2 * scaleX;
+            const y2 = rawY2 * scaleY;
+
+            ctxOverlay.strokeStyle = "#00FFFF";
+            ctxOverlay.strokeRect(x1, y1, x2 - x1, y2 - y1);
+            
+            ctxOverlay.fillStyle = "#00FFFF";
+            const text = box.label;
+            const width = ctxOverlay.measureText(text).width;
+            ctxOverlay.fillRect(x1, y1 - 25, width + 10, 25);
+            ctxOverlay.fillStyle = "black";
+            ctxOverlay.fillText(text, x1 + 5, y1 - 6);
+        });
+    }
+
+    function updateReceipt(cart, total) {
+        itemList.innerHTML = "";
+        cart.forEach(item => {
+            const li = document.createElement("li");
+            li.className = "item-row";
+            li.innerHTML = `<span>${item.name}</span> <span class="price">₱${item.price.toFixed(2)}</span>`;
+            itemList.appendChild(li);
+        });
+        itemList.scrollTop = itemList.scrollHeight;
+        totalBox.innerText = "Total: ₱" + total.toFixed(2);
+    }
+
+    start();
+</script>
+</body>
+</html>
+
