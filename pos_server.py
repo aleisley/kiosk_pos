@@ -14,7 +14,7 @@ print("Loading Grocery POS Models...")
 
 # Load Object Detection (Using .pt format for now)
 try:
-    model = YOLO('best.pt')
+    model = YOLO('best_v12.pt')
     print("✅ Custom Torch Model Loaded (best.pt)")
 except Exception as e:
     print(f"⚠️ Custom model not found ({e}). Using Standard YOLO.")
