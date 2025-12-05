@@ -3,6 +3,7 @@ import numpy as np
 import mediapipe as mp
 import json
 import time
+import subprocess
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from ultralytics import YOLO
 
@@ -156,6 +157,14 @@ async def websocket_endpoint(websocket: WebSocket):
                                 state.total += item["price"]
                                 state.last_scan_time = scan_time
                                 response["feedback"] = f"Added {item['name']}!"
+                                
+                                # Play beep sound (non-blocking)
+                                try:
+                                    subprocess.Popen(['paplay', 'beep.wav'],
+                                                   stdout=subprocess.DEVNULL, 
+                                                   stderr=subprocess.DEVNULL)
+                                except Exception as e:
+                                    print(f"Sound error: {e}")  # Debug: see if sound fails
 
             # --- D. HAND GESTURE DETECTION ---
             current_gesture = "UNKNOWN"
