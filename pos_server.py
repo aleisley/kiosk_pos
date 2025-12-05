@@ -29,6 +29,14 @@ hands = mp_hands.Hands(
     min_tracking_confidence=0.5
 )
 
+# Load Face Detection to filter out false positives
+mp_face_detection = mp.solutions.face_detection
+face_detector = mp_face_detection.FaceDetection(
+    model_selection=0,  # 0 for short range (< 2m), 1 for full range
+    min_detection_confidence=0.5
+)
+print("✅ Face detection loaded")
+
 # --- 2. PRODUCT DATABASE ---
 # Mapped from data.yaml classes (34 products)
 ITEM_DB = {
@@ -125,15 +133,62 @@ async def websocket_endpoint(websocket: WebSocket):
             
             # Check for items in SCANNING mode (SCANNING Lock)
             if state.mode == "SCANNING":
+                 # Run face detection first to filter out faces
+                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                 face_results = face_detector.process(frame_rgb)
+                 face_boxes = []
+                 
+                 if face_results.detections:
+                     h, w = frame.shape[:2]
+                     for detection in face_results.detections:
+                         bbox = detection.location_data.relative_bounding_box
+                         # Expand face box by 30% on all sides to catch nearby detections
+                         expand = 0.3
+                         x1 = int((bbox.xmin - bbox.width * expand) * w)
+                         y1 = int((bbox.ymin - bbox.height * expand) * h)
+                         x2 = int((bbox.xmin + bbox.width * (1 + expand)) * w)
+                         y2 = int((bbox.ymin + bbox.height * (1 + expand)) * h)
+                         # Clamp to frame boundaries
+                         x1, y1 = max(0, x1), max(0, y1)
+                         x2, y2 = min(w, x2), min(h, y2)
+                         face_boxes.append([x1, y1, x2, y2])
+                 
                  # Speed optimizations: GPU acceleration, lower confidence, IOU filtering
-                 results = model(frame, conf=0.5, iou=0.45, verbose=False, imgsz=640)
+                 results = model(frame, conf=0.6, iou=0.5, verbose=False, imgsz=640)
                  for r in results:
-                    if len(r.boxes) > 0:
-                        product_detected = True
-                        
                     for box in r.boxes:
                         x1, y1, x2, y2 = box.xyxy[0].tolist()
                         label_name = model.names[int(box.cls[0])]
+                        cls_id = int(box.cls[0])
+                        
+                        # Check if detection overlaps with any face
+                        is_face = False
+                        for fx1, fy1, fx2, fy2 in face_boxes:
+                            # Calculate IoU (Intersection over Union)
+                            ix1, iy1 = max(x1, fx1), max(y1, fy1)
+                            ix2, iy2 = min(x2, fx2), min(y2, fy2)
+                            
+                            if ix2 > ix1 and iy2 > iy1:
+                                inter_area = (ix2 - ix1) * (iy2 - iy1)
+                                box_area = (x2 - x1) * (y2 - y1)
+                                overlap_ratio = inter_area / box_area
+                                
+                                # If detection overlaps >20% with expanded face region, skip it
+                                if overlap_ratio > 0.2:
+                                    is_face = True
+                                    print(f"⚠️ Filtered face detection: {label_name} (overlap: {overlap_ratio:.2%})")
+                                    break
+                        
+                        # Skip if this is a face detection
+                        if is_face:
+                            continue
+                        
+                        # Only process valid products
+                        if cls_id not in ITEM_DB:
+                            continue
+                        
+                        # Valid product detected
+                        product_detected = True
                         
                         response["boxes"].append({
                             "coords": [x1, y1, x2, y2],
@@ -141,33 +196,31 @@ async def websocket_endpoint(websocket: WebSocket):
                         })
                         
                         # Add to Cart Logic
-                        cls_id = int(box.cls[0])
-                        if cls_id in ITEM_DB:
-                            item = ITEM_DB[cls_id]
-                            scan_time = time.time()
-                            if scan_time - state.last_scan_time > state.cooldown:
-                                # Check if item already in cart
-                                found = False
-                                for cart_item in state.cart:
-                                    if cart_item["name"] == item["name"]:
-                                        cart_item["quantity"] += 1
-                                        found = True
-                                        break
-                                
-                                if not found:
-                                    state.cart.append({**item, "quantity": 1})
-                                
-                                state.total += item["price"]
-                                state.last_scan_time = scan_time
-                                response["feedback"] = f"Added {item['name']}!"
-                                
-                                # Play beep sound (non-blocking)
-                                try:
-                                    subprocess.Popen(['paplay', 'beep.wav'],
-                                                   stdout=subprocess.DEVNULL, 
-                                                   stderr=subprocess.DEVNULL)
-                                except Exception as e:
-                                    print(f"Sound error: {e}")  # Debug: see if sound fails
+                        item = ITEM_DB[cls_id]
+                        scan_time = time.time()
+                        if scan_time - state.last_scan_time > state.cooldown:
+                            # Check if item already in cart
+                            found = False
+                            for cart_item in state.cart:
+                                if cart_item["name"] == item["name"]:
+                                    cart_item["quantity"] += 1
+                                    found = True
+                                    break
+                            
+                            if not found:
+                                state.cart.append({**item, "quantity": 1})
+                            
+                            state.total += item["price"]
+                            state.last_scan_time = scan_time
+                            response["feedback"] = f"Added {item['name']}!"
+                            
+                            # Play beep sound (non-blocking)
+                            try:
+                                subprocess.Popen(['paplay', 'beep.wav'],
+                                               stdout=subprocess.DEVNULL, 
+                                               stderr=subprocess.DEVNULL)
+                            except Exception as e:
+                                print(f"Sound error: {e}")  # Debug: see if sound fails
 
             # --- D. HAND GESTURE DETECTION ---
             current_gesture = "UNKNOWN"
