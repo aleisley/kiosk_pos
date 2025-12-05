@@ -91,6 +91,8 @@ class KioskState:
         self.cooldown = 2.5
         self.last_gesture = "UNKNOWN"
         self.gesture_debounce = 0
+        self.gesture_timeout = 3.0  # Seconds to complete OPEN->CLOSED sequence
+        self.last_gesture_time = 0
 
 state = KioskState()
 
@@ -188,18 +190,29 @@ async def websocket_endpoint(websocket: WebSocket):
             curr_time = time.time()
 
             if current_gesture != "UNKNOWN":
+                # Check if last gesture has expired
+                if curr_time - state.last_gesture_time > state.gesture_timeout:
+                    state.last_gesture = "UNKNOWN"
+                
+                # Detect OPEN->CLOSED sequence within timeout
                 if curr_time - state.gesture_debounce > 1.5:
                     if state.last_gesture == "OPEN" and current_gesture == "CLOSED":
-                        trigger_action = True
-                        state.gesture_debounce = curr_time
-                        print("👉 GRAB DETECTED!")
-                state.last_gesture = current_gesture
+                        # Verify OPEN happened recently (within timeout)
+                        if curr_time - state.last_gesture_time <= state.gesture_timeout:
+                            trigger_action = True
+                            state.gesture_debounce = curr_time
+                            print("👉 OPEN→CLOSED DETECTED!")
+                
+                # Update gesture state
+                if current_gesture != state.last_gesture:
+                    state.last_gesture = current_gesture
+                    state.last_gesture_time = curr_time
             else:
                 state.last_gesture = "UNKNOWN"
 
             # --- F. STATE MACHINE ---
             if state.mode == "IDLE":
-                response["feedback"] = "Clench Fist to Start ✊"
+                response["feedback"] = "Open Hand ✋ then Fist ✊ to Start"
                 if trigger_action:
                     state.mode = "SCANNING"
                     state.cart = []
@@ -207,8 +220,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     print("Transition: IDLE -> SCANNING")
 
             elif state.mode == "SCANNING":
-                # if not product_detected:
-                #      if response["feedback"] == "": response["feedback"] = "Scanning... Clench to Pay ✊"
+                if response["feedback"] == "":
+                    response["feedback"] = "Scanning... Open Hand ✋ then Fist ✊ to Pay"
                 
                 if trigger_action:
                     state.mode = "PAID"
