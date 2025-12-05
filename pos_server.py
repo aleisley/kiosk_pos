@@ -193,6 +193,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 
                 if trigger_action:
                     state.mode = "PAID"
+                    state.cart = []
+                    state.total = 0.0
                     print("Transition: SCANNING -> PAID")
 
             elif state.mode == "PAID":
