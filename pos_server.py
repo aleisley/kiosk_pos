@@ -6,6 +6,7 @@ import time
 import subprocess
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from ultralytics import YOLO
+from gtts import gTTS
 
 app = FastAPI()
 
@@ -77,6 +78,25 @@ ITEM_DB = {
 }
 
 # --- 3. HELPER FUNCTIONS ---
+def speak_total(total_amount: float):
+    try:
+        amount_str = f"{total_amount:.2f}"
+        tts = gTTS(text=f"Your total is {amount_str} pesos", lang="en")
+        filename = "total.mp3"
+        tts.save(filename)
+
+        # Play the spoken total (non-blocking)
+        try:
+            subprocess.Popen(
+                ["paplay", filename],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as e:
+            print(f"Sound playback error (TTS): {e}")
+    except Exception as e:
+        print(f"TTS generation error: {e}")
+
 def get_gesture_state(hand_landmarks):
     tips = [8, 12, 16, 20]
     pips = [6, 10, 14, 18]   
@@ -278,15 +298,20 @@ async def websocket_endpoint(websocket: WebSocket):
                     response["feedback"] = "Scanning... Open Hand ✋ then Fist ✊ to Pay"
                 
                 if trigger_action:
+                    # Speak the total amount before clearing cart and total
+                    if state.total > 0:
+                        speak_total(state.total)
+
                     state.mode = "PAID"
-                    state.cart = []
-                    state.total = 0.0
                     print("Transition: SCANNING -> PAID")
 
             elif state.mode == "PAID":
                 response["feedback"] = "Paid! Resetting..."
                 if time.time() - state.gesture_debounce > 2.0:
-                     state.mode = "IDLE"
+                    # After payment and TTS, now clear cart and total
+                    state.mode = "IDLE"
+                    state.cart = []
+                    state.total = 0.0
 
             # G. Send JSON
             await websocket.send_text(json.dumps(response))
